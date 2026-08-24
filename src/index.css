@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  font-family:
+    "Pretendard Variable",
+    Pretendard,
+    "Noto Sans KR",
+    "Apple SD Gothic Neo",
+    "Malgun Gothic",
+    Inter,
+    system-ui,
+    sans-serif;
+
+  color: #f5eadb;
+  background: #080605;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  word-break: keep-all;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 1200px;
+  min-height: 100vh;
+  background: #080605;
+}
+
+* {
+  box-sizing: border-box;
+}
