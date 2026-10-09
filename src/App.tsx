@@ -1,18 +1,101 @@
-import { useState } from "react";
-import MainLayout from "./components/layout/MainLayout";
-import CharacterPage from "./pages/CharacterPage";
-import AdventurePage from "./pages/AdventurePage";
-
-export type PageName = "characters" | "adventures";
-
-function App() {
-  const [activePage, setActivePage] = useState<PageName>("characters");
-
-  return (
-    <MainLayout activePage={activePage} onNavigate={setActivePage}>
-      {activePage === "characters" ? <CharacterPage /> : <AdventurePage />}
-    </MainLayout>
-  );
+import {useCallback,useEffect,useRef,useState} from 'react';
+import type {ReactNode,FormEvent} from 'react';
+import type {Adventure,AdventureCharacter} from './types/adventure';
+import type {NeopleCharacterSearchResult,JobType} from './types/character';
+import type {Schedule,RaidType,Job,Party} from './types/raid';
+import {api,getBase} from './api/client';
+import './App.css';
+export type PageName='characters'|'adventures'|'raids'|'settings';
+const names:Record<PageName,string>={raids:'레이드 편성',adventures:'모험단',characters:'캐릭터 등록',settings:'연결 설정'};
+const servers:Record<string,string>={cain:'카인',diregie:'디레지에',siroco:'시로코',prey:'프레이',casillas:'카시야스',hilder:'힐더',anton:'안톤',bakal:'바칼'};
+const roleName:Record<JobType,string>={UNKNOWN:'미분류',DEALER:'딜러',BUFFER:'버퍼'};
+const num=(n:number|null|undefined)=>n==null?'—':n.toLocaleString('ko-KR');
+const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+type Character=AdventureCharacter&{adventureId:number;adventureName:string};
+function Modal({title,children,onClose,busy}:{title:string;children:ReactNode;onClose:()=>void;busy:boolean}){
+ const ref=useRef<HTMLDialogElement>(null);useEffect(()=>{ref.current?.showModal();},[]);
+ return <dialog ref={ref} className="modal" onCancel={e=>{e.preventDefault();if(!busy)onClose();}} aria-label={title}><div className="split"><h2>{title}</h2><button type="button" aria-label="닫기" disabled={busy} onClick={onClose}>×</button></div>{children}</dialog>;
 }
-
-export default App;
+export default function App(){
+ const [page,setPage]=useState<PageName>('raids'),[adventures,setAdventures]=useState<Adventure[]>([]),[schedules,setSchedules]=useState<Schedule[]>([]),[types,setTypes]=useState<RaidType[]>([]),[jobs,setJobs]=useState<Job[]>([]);
+ const [scheduleId,setScheduleId]=useState(0),[roundId,setRoundId]=useState(0),[base,setBase]=useState(getBase),[address,setAddress]=useState(getBase),[connected,setConnected]=useState(false),[loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[success,setSuccess]=useState('');
+ const [modal,setModal]=useState<'schedule'|'round'|'type'|'spec'|'remove'|'finalize'|null>(null),[target,setTarget]=useState(0),[selected,setSelected]=useState<Character|null>(null),[editing,setEditing]=useState<Character|null>(null);
+ const [query,setQuery]=useState(''),[filter,setFilter]=useState(''),[server,setServer]=useState('siroco'),[results,setResults]=useState<NeopleCharacterSearchResult[]|null>(null),[candidate,setCandidate]=useState<NeopleCharacterSearchResult|null>(null);
+ const [scheduleName,setScheduleName]=useState(''),[date,setDate]=useState(today),[typeId,setTypeId]=useState(''),[typeName,setTypeName]=useState(''),[memberCount,setMemberCount]=useState('12');
+ const [equipment,setEquipment]=useState(''),[buff,setBuff]=useState(''),[damage,setDamage]=useState(''),[memo,setMemo]=useState(''),[role,setRole]=useState<JobType>('UNKNOWN');
+ const characters:Character[]=adventures.flatMap(a=>a.characters.map(c=>({...c,adventureId:a.id,adventureName:a.adventureName})));
+ const schedule=schedules.find(s=>s.id===scheduleId)??schedules[0];
+ const round=schedule?.rounds.find(r=>r.id===roundId)??schedule?.rounds[0];
+ const used=new Set(round?.parties.flatMap(p=>p.members.map(m=>m.adventureId))??[]);
+ const placed=round?.parties.reduce((n,p)=>n+p.members.length,0)??0;
+ const refresh=useCallback(async()=>{
+  setLoading(true);setError('');try{
+   const [a,s,t,j]=await Promise.all([api<Adventure[]>('/api/adventures'),api<Schedule[]>('/api/raid-schedules'),api<RaidType[]>('/api/raid-types'),api<Job[]>('/api/jobs')]);
+   if(![a,s,t,j].every(Array.isArray))throw new Error('서버 응답 형식이 올바르지 않습니다.');
+   setAdventures(a);setSchedules(s);setTypes(t);setJobs(j);setConnected(true);
+  }catch(e){setConnected(false);setAdventures([]);setSchedules([]);setTypes([]);setJobs([]);setSelected(null);setError(e instanceof Error?e.message:'목록을 불러오지 못했습니다.');}finally{setLoading(false);}
+ },[]);
+ useEffect(()=>{if(base)void refresh();},[base,refresh]);
+ useEffect(()=>{
+  const ctx=(document as Document&{modelContext?:{registerTool:(tool:unknown,options:{signal:AbortSignal})=>void|Promise<void>}}).modelContext;
+  if(!ctx)return;const controller=new AbortController();
+  const tool={name:'navigate_raid_workspace',description:'모험단, 캐릭터 등록, 레이드 편성 또는 연결 설정 화면으로 이동합니다.',inputSchema:{type:'object',properties:{page:{type:'string',enum:Object.keys(names)}},required:['page'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute:(input:unknown)=>{const p=(input as {page?:string})?.page;if(!p||!Object.hasOwn(names,p))throw new Error('지원하지 않는 화면입니다.');setPage(p as PageName);return {page:p,title:names[p as PageName]};}};
+  try{void Promise.resolve(ctx.registerTool(tool,{signal:controller.signal})).catch(()=>{});}catch{/* 지원하지 않는 브라우저 */}
+  return ()=>controller.abort();
+ },[]);
+ async function act(action:()=>Promise<void>,message:string){
+  if(busy)return;setBusy(true);setError('');setSuccess('');try{await action();setSuccess(message);setModal(null);}catch(e){setError(e instanceof Error?e.message:'요청을 처리하지 못했습니다.');}finally{setBusy(false);}
+ }
+ function putSchedule(s:Schedule){setSchedules(list=>[s,...list.filter(x=>x.id!==s.id)].sort((a,b)=>b.startDate.localeCompare(a.startDate)||b.id-a.id));setScheduleId(s.id);}
+ function connect(e:FormEvent){e.preventDefault();try{
+  const url=new URL(address.trim());if(url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new Error('경로 없이 서버 주소만 입력해 주세요.');
+  const local=['localhost','127.0.0.1','[::1]'].includes(url.hostname);
+  if(url.protocol!=='https:'&&!(url.protocol==='http:'&&local))throw new Error('외부 서버는 HTTPS 주소를 사용해 주세요.');
+  if(location.protocol==='https:'&&url.protocol==='http:')throw new Error('배포된 사이트에는 HTTPS 백엔드 주소가 필요합니다. 로컬 서버는 로컬 미리보기에서 연결해 주세요.');
+  localStorage.setItem('raid-api-base',url.origin);setBase(url.origin);setAddress(url.origin);if(base===url.origin)void refresh();setSuccess('연결 주소를 저장했습니다.');
+ }catch(e){setError(e instanceof Error?e.message:'주소를 확인해 주세요.');}}
+ const score=(value:string)=>value===''?null:Number(value);
+ async function submitModal(e:FormEvent){e.preventDefault();await act(async()=>{
+  if(modal==='schedule'){const s=await api<Schedule>('/api/raid-schedules','POST',{scheduleName,startDate:date,memo:null});putSchedule(s);setRoundId(0);}
+  if(modal==='type'){const t=await api<RaidType>('/api/raid-types','POST',{raidName:typeName,memberCount:Number(memberCount)});setTypes(list=>[...list,t]);setTypeId(String(t.id));}
+  if(modal==='round'&&schedule){const s=await api<Schedule>('/api/raid-schedules/'+schedule.id+'/rounds','POST',{raidTypeId:Number(typeId)});putSchedule(s);setRoundId(s.rounds.at(-1)?.id??0);}
+  if(modal==='remove'){putSchedule(await api<Schedule>('/api/raid-members/'+target,'DELETE'));}
+  if(modal==='finalize'&&schedule){putSchedule(await api<Schedule>('/api/raid-schedules/'+schedule.id+'/finalize','POST'));}
+  if(modal==='spec'&&editing){
+   const job=jobs.find(j=>j.jobName===editing.jobName);if(!job)throw new Error('직업 정보를 찾을 수 없습니다.');
+   if(job.jobType!==role)await api('/api/jobs/'+job.id+'/role','PUT',{jobType:role});
+   await api('/api/characters/'+editing.id+'/spec','PUT',{equipmentScore:score(equipment),dundamDamage:score(damage),buffScore:score(buff),memo});
+   await refresh();setSelected(null);
+  }
+ },'저장했습니다.');}
+ async function assign(p:Party,slot:number){
+  if(!selected||!schedule)return;
+  await act(async()=>{putSchedule(await api<Schedule>('/api/raid-parties/'+p.id+'/members','POST',{characterId:selected.id,slotNo:slot}));setSelected(null);},'캐릭터를 배치했습니다.');
+ }
+ function startSpec(c:Character){setEditing(c);setEquipment(c.equipmentScore==null?'':String(c.equipmentScore));setBuff(c.buffScore==null?'':String(c.buffScore));setDamage(c.dundamDamage==null?'':String(c.dundamDamage));setMemo(c.memo??'');setRole(c.jobType);setModal('spec');}
+ function startSchedule(){setScheduleName('');setDate(today());setModal('schedule');}
+ function startRound(){setTypeId(String(types[0]?.id??''));setModal('round');}
+ function scores(){return <div className="form-grid"><label>장비점수<input type="number" min="0" step="1" value={equipment} onChange={e=>setEquipment(e.target.value)}/></label><label>버프점수<input type="number" min="0" step="1" value={buff} onChange={e=>setBuff(e.target.value)}/></label><label>던담 딜량<input type="number" min="0" step="1" value={damage} onChange={e=>setDamage(e.target.value)}/></label><label>메모<input maxLength={255} value={memo} onChange={e=>setMemo(e.target.value)}/></label></div>}
+ function table(list:Character[],placement=false){return <div className="table-wrap"><table><thead><tr><th>캐릭터 / 모험단</th><th>직업 / 역할</th><th>명성</th><th>장비점수</th><th>버프점수</th><th>{placement?'참가':'관리'}</th></tr></thead><tbody>{list.map(c=><tr key={c.id} className={selected?.id===c.id?'selected':''}><td>{c.characterName}<small>{c.adventureName} · {servers[c.serverId]??c.serverId}</small></td><td>{c.jobName}<small><span className={'pill '+c.jobType.toLowerCase()}>{roleName[c.jobType]}</span></small></td><td>{num(c.fame)}</td><td>{num(c.equipmentScore)}</td><td>{num(c.buffScore)}</td><td>{placement?<button disabled={busy||schedule?.finalized||used.has(c.adventureId)||c.jobType==='UNKNOWN'} onClick={()=>setSelected(selected?.id===c.id?null:c)}>{used.has(c.adventureId)?'모험단 출전 중':c.jobType==='UNKNOWN'?'역할 지정 필요':selected?.id===c.id?'선택 해제':'선택'}</button>:<button className="row-button" disabled={busy} onClick={()=>startSpec(c)}>스펙·역할 수정</button>}</td></tr>)}</tbody></table>{list.length===0&&<p className="caption">표시할 캐릭터가 없습니다.</p>}</div>}
+ return <div className="app"><aside><a className="brand" href="#raids" onClick={()=>setPage('raids')}><span className="brand-mark">DF</span><span>던파 벞교<small>RAID WORKSPACE</small></span></a><p className="nav-label">작업 공간</p><nav>{Object.entries(names).map(([key,label],i)=><button key={key} disabled={busy} className={page===key?'active':''} onClick={()=>{setPage(key as PageName);setError('');setSuccess('');}}><span>{['▦','◈','＋','⚙'][i]}</span>{label}</button>)}</nav><div className="aside-footer">모험단 하나, 기수당 한 캐릭터.<br/><span>함께 만드는 레이드 편성표</span></div></aside><main><header className="topbar"><span>WORKSPACE <b>/ {names[page]}</b></span><span className="connection">{loading?'연결 확인 중':connected?'백엔드 연결됨':'백엔드 연결 대기'}</span></header><div className="content"><div className="page-heading"><div><p className="eyebrow">RAID ORGANIZER</p><h1>{names[page]}</h1></div>{page==='raids'&&<button className="primary" disabled={!connected||busy||loading} onClick={startSchedule}>＋ 새 편성표</button>}</div>
+ {error&&<div className="error" role="alert">{error} {base&&<button disabled={loading||busy} onClick={()=>void refresh()}>다시 연결</button>}</div>}{success&&<div className="success" role="status">{success}</div>}
+ {!connected&&page!=='settings'&&<section className="notice"><span>연결 준비</span><div><strong>기존 백엔드를 연결하면 편성을 시작할 수 있어요.</strong><p>모험단과 캐릭터, 편성표는 기존 서버에 저장합니다.</p></div><button onClick={()=>setPage('settings')}>연결 설정</button></section>}
+ {page==='settings'&&<section className="panel"><h2>백엔드 연결</h2><p className="muted">현재 백엔드는 로컬에서 실행 중입니다. 배포된 사이트에서 실제 데이터를 사용하려면 HTTPS 백엔드 주소가 필요합니다.</p><form onSubmit={connect} style={{marginTop:24}}><label>백엔드 주소<input type="url" placeholder="https://api.example.com" required value={address} onChange={e=>setAddress(e.target.value)}/></label><div className="actions" style={{marginTop:20}}><button className="primary" disabled={busy||loading}>저장하고 연결</button>{base&&<button type="button" disabled={busy||loading} onClick={()=>{localStorage.removeItem('raid-api-base');setBase('');setAddress('');setConnected(false);setAdventures([]);setSchedules([]);setTypes([]);setJobs([]);setSelected(null);setError('');}}>연결 해제</button>}</div></form><p className="caption">이 브라우저에는 연결 주소만 저장합니다. 캐릭터와 편성 데이터는 백엔드의 MySQL에 저장됩니다.</p><p className="caption">로컬 실행: 프론트 미리보기에서 http://localhost:8080을 연결해 주세요.</p></section>}
+ {page==='raids'&&<>
+ {connected&&<><div className="toolbar"><label>편성표<select value={schedule?.id??''} disabled={busy||loading} onChange={e=>{setScheduleId(Number(e.target.value));setRoundId(0);setSelected(null);}}><option value="" disabled>편성표 선택</option>{schedules.map(s=><option key={s.id} value={s.id}>{s.startDate} · {s.scheduleName}{s.finalized?' · 확정':''}</option>)}</select></label><div className="actions"><button disabled={busy||loading} onClick={()=>void refresh()}>새로고침</button><button disabled={busy||!schedule||schedule.finalized||types.length===0} onClick={startRound}>＋ 기수 추가</button>{schedule&&!schedule.finalized&&<button disabled={busy||!schedule.rounds.length} onClick={()=>setModal('finalize')}>편성 확정</button>}</div></div>{types.length===0&&<section className="notice"><div><strong>레이드 종류를 먼저 등록해 주세요.</strong><p>참가 인원에 맞춰 4인 파티를 생성합니다.</p></div><button disabled={busy} onClick={()=>setModal('type')}>레이드 종류 등록</button></section>}{types.length>0&&<button className="row-button" disabled={busy} onClick={()=>setModal('type')}>레이드 종류 추가</button>}{schedule&&<div className="tabs">{schedule.rounds.map(r=><button key={r.id} disabled={busy} className={round?.id===r.id?'active':''} onClick={()=>{setRoundId(r.id);setSelected(null);}}>{r.roundNo}기 · {r.raidType.raidName}</button>)}</div>}</>}
+ <div className="stats"><div className="stat"><p>선택한 기수</p><strong>{round?round.roundNo+'기':'—'}</strong></div><div className="stat"><p>배치 인원</p><strong>{round?placed+' / '+round.raidType.memberCount:'—'}</strong></div><div className="stat"><p>미배치 버퍼</p><strong>{connected?characters.filter(c=>c.jobType==='BUFFER'&&!used.has(c.adventureId)).length:'—'}</strong></div></div>
+ {connected&&!round&&<div className="empty"><h2>{schedule?'기수를 추가해 주세요':'첫 편성표를 만들어 주세요'}</h2><p>날짜와 레이드 종류를 정하고 캐릭터를 배치합니다.</p></div>}
+ {round&&<><div className="board-top"><h2>{round.raidType.raidName} · {round.roundNo}기 <span className="pill">{schedule?.finalized?'확정':'편성 중'}</span></h2><span>딜러 3명 + 버퍼 1명 / 모험단 중복 금지</span></div>{selected&&<div className="notice"><div><strong>{selected.characterName} 선택됨</strong><p>배치할 파티의 빈 {selected.jobType==='BUFFER'?'버퍼':'딜러'} 자리를 눌러 주세요.</p></div><button onClick={()=>setSelected(null)}>선택 취소</button></div>}<div className="party-grid">{round.parties.map(p=><section key={p.id} className={'party '+p.partyType.toLowerCase()}><header><span className="party-dot"/><h2>{p.partyType} 파티</h2><span>{p.members.length} / 4</span></header>{[1,2,3,4].map(slot=>{const m=p.members.find(x=>x.slotNo===slot);return <button key={slot} className={'slot '+(m?'filled':'')} disabled={busy||schedule?.finalized||(!m&&(!selected||((slot===4)!==(selected.jobType==='BUFFER'))))} aria-label={p.partyType+' '+slot+'번 '+(m?m.characterName+' 배치 해제':'배치')} onClick={()=>{if(m){setTarget(m.id);setModal('remove');}else void assign(p,slot);}}><span className="slot-number">{String(slot).padStart(2,'0')}</span><div><strong>{m?.characterName??(slot===4?'버퍼 자리':'딜러 자리')}</strong><small>{m?m.adventureName+' · '+m.jobName:'캐릭터를 배치해 주세요'}</small></div><span className="slot-plus">{m?'×':'＋'}</span></button>})}<footer>장비점수 합계 <strong>{num(p.members.filter(m=>m.jobType==='DEALER').reduce((n,m)=>n+(m.equipmentScore??0),0))}</strong><br/>버프점수 <strong>{num(p.members.find(m=>m.jobType==='BUFFER')?.buffScore)}</strong></footer></section>)}</div><section className="panel roster"><div className="toolbar"><div><h2>참가 캐릭터</h2><p className="muted">캐릭터를 선택한 뒤 파티에 배치하세요.</p></div><label>캐릭터·모험단 검색<input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="이름으로 검색"/></label></div>{table(characters.filter(c=>(c.characterName+' '+c.adventureName).includes(filter)),true)}</section></>}
+ {!connected&&<div className="empty"><h2>내 모험단으로 편성 시작하기</h2><p>연결 설정에서 백엔드를 연결해 주세요. 실제 편성표는 연결 후 표시됩니다.</p></div>}
+ <p className="caption">자동 편성은 다음 개발 단계입니다. 먼저 수동 편성을 확정하고 기수별 출전 이력을 보존합니다.</p></>}
+ {page==='adventures'&&<><div className="stats"><div className="stat"><p>모험단</p><strong>{connected?adventures.length:'—'}</strong></div><div className="stat"><p>캐릭터</p><strong>{connected?characters.length:'—'}</strong></div><div className="stat"><p>버퍼</p><strong>{connected?characters.filter(c=>c.jobType==='BUFFER').length:'—'}</strong></div></div>{adventures.map(a=><section className="panel" key={a.id}><div className="split"><h2>◈ {a.adventureName}</h2><span className="muted">{a.characters.length} 캐릭터</span></div>{table(characters.filter(c=>c.adventureId===a.id))}</section>)}{connected&&adventures.length===0&&<div className="empty"><h2>아직 등록된 모험단이 없어요</h2><p>캐릭터를 등록하면 모험단별로 표시됩니다.</p><button onClick={()=>setPage('characters')}>캐릭터 등록</button></div>}</>}
+ {page==='characters'&&<><section className="panel"><h2>네오플 캐릭터 검색</h2><form onSubmit={e=>{e.preventDefault();void act(async()=>{const data=await api<{rows:NeopleCharacterSearchResult[]}>('/api/characters/search?'+new URLSearchParams({serverId:server,characterName:query.trim()}));setResults(data.rows);setCandidate(null);},'검색을 완료했습니다.');}}><div className="form-grid" style={{marginTop:20}}><label>서버<select value={server} onChange={e=>setServer(e.target.value)}>{Object.entries(servers).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label><label>캐릭터명<input required maxLength={50} value={query} onChange={e=>setQuery(e.target.value)} placeholder="캐릭터명을 입력해 주세요"/></label></div><button className="primary" disabled={!connected||busy} style={{marginTop:20}}>{busy?'처리 중…':'캐릭터 검색'}</button></form></section>{results&&<section className="panel"><h2>검색 결과 · {results.length}명</h2>{results.length===0&&<p className="caption">일치하는 캐릭터가 없습니다.</p>}{results.map(c=><div className="split search-result" key={c.serverId+c.characterId}><div><strong>{c.characterName}</strong><p className="muted">{c.jobGrowName} · 명성 {num(c.fame)}</p></div><button disabled={busy} onClick={()=>{setCandidate(c);setEquipment('');setBuff('');setDamage('');setMemo('');}}>선택</button></div>)}</section>}{candidate&&<section className="panel"><h2>{candidate.characterName} 등록</h2><p className="muted">{candidate.jobGrowName} · {servers[candidate.serverId]}</p><form onSubmit={e=>{e.preventDefault();void act(async()=>{await api('/api/characters','POST',{serverId:candidate.serverId,characterId:candidate.characterId,equipmentScore:score(equipment)??0,dundamDamage:score(damage),buffScore:score(buff),memo});await refresh();setCandidate(null);setResults(null);},'캐릭터를 등록했습니다. 모험단 화면에서 직업 역할을 지정해 주세요.');}}><div style={{marginTop:20}}>{scores()}</div><button className="primary" disabled={busy} style={{marginTop:20}}>캐릭터 등록</button><p className="caption">직업 역할은 등록 후 모험단 화면에서 딜러 또는 버퍼로 지정해 주세요.</p></form></section>}</>}
+ </div></main>{modal&&<Modal title={{schedule:'새 편성표',round:'기수 추가',type:'레이드 종류 등록',spec:'스펙·역할 수정',remove:'배치 해제',finalize:'편성표 확정'}[modal]} busy={busy} onClose={()=>setModal(null)}><form onSubmit={submitModal}>
+ {modal==='schedule'&&<div className="form-grid"><label>편성표 이름<input required maxLength={100} value={scheduleName} onChange={e=>setScheduleName(e.target.value)} placeholder="토요일 벞교"/></label><label>진행 날짜<input required type="date" value={date} onChange={e=>setDate(e.target.value)}/></label></div>}
+ {modal==='round'&&<label>레이드 종류<select required value={typeId} onChange={e=>setTypeId(e.target.value)}>{types.map(t=><option key={t.id} value={t.id}>{t.raidName} · {t.memberCount}명 / {t.memberCount/4}파티</option>)}</select></label>}
+ {modal==='type'&&<div className="form-grid"><label>레이드 이름<input required maxLength={50} value={typeName} onChange={e=>setTypeName(e.target.value)} placeholder="바칼"/></label><label>참가 인원<select value={memberCount} onChange={e=>setMemberCount(e.target.value)}>{[4,8,12,16,20].map(n=><option key={n} value={n}>{n}명 · {n/4}파티</option>)}</select></label></div>}
+ {modal==='spec'&&<><p className="muted">{editing?.characterName} · {editing?.jobName}</p><label style={{margin:'18px 0'}}>직업 역할<select value={role} onChange={e=>setRole(e.target.value as JobType)}><option value="UNKNOWN">미분류</option><option value="DEALER">딜러</option><option value="BUFFER">버퍼</option></select></label><p className="caption">같은 직업의 모든 캐릭터에 적용됩니다. 편성에 사용된 직업은 역할을 변경할 수 없습니다.</p>{scores()}</>}
+ {modal==='remove'&&<p>이 캐릭터를 파티에서 해제할까요? 캐릭터 등록 정보는 유지됩니다.</p>}
+ {modal==='finalize'&&<p>모든 파티가 딜러 3명과 버퍼 1명으로 채워져 있어야 합니다. 확정된 편성표는 수정할 수 없으며 이력으로 보존됩니다.</p>}
+ {error&&<p className="error" role="alert">{error}</p>}<div className="actions"><button type="button" disabled={busy} onClick={()=>setModal(null)}>취소</button><button className="primary" disabled={busy}>{busy?'저장 중…':modal==='remove'?'배치 해제':modal==='finalize'?'확정':'저장'}</button></div></form></Modal>}</div>;
+}

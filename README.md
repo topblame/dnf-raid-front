@@ -1,75 +1,29 @@
-# React + TypeScript + Vite
+# 던파 벞교 프론트엔드
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React · TypeScript · Vite 프론트입니다. `raid-sites`의 화면과 기능을 이 프로젝트로 통합했습니다.
 
-Currently, two official plugins are available:
+## 로컬 실행
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. 변경된 API가 반영되도록 `Df_raid_backend`를 재시작합니다.
+2. 이 폴더에서 `npm run dev`를 실행합니다.
+3. `http://localhost:5173`을 엽니다.
+4. 연결 설정에서 `http://localhost:8080`을 입력하면 연결 상태를 다시 확인할 수 있습니다.
 
-## React Compiler
+개발 포트는 5173으로 고정합니다. 이미 다른 프로그램이 사용 중이면 시작 시 오류가 표시됩니다.
+백엔드 주소 우선순위는 연결 설정에서 저장한 주소 → 기존 `.env`의 `VITE_API_BASE_URL` → 로컬 기본값 `http://localhost:8080`입니다.
+기존 환경 설정과 의존성은 유지합니다. 연결 주소만 브라우저에 저장하고 실제 데이터는 백엔드 MySQL에 저장합니다.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 기능
 
-## Expanding the ESLint configuration
+- 네오플 캐릭터 검색·등록
+- 모험단별 캐릭터 조회, 스펙 수정, 직업 역할 지정
+- 레이드 종류·편성표·기수 생성
+- 딜러 3명 + 버퍼 1명 수동 편성, 배치 해제
+- 같은 기수의 모험단 중복 출전 방지
+- 편성 확정과 이력 보존
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+자동 편성과 관리자 로그인은 아직 구현하지 않았습니다.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## 빌드
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+`npm run build`로 TypeScript 검사와 Vite 배포 빌드를 실행합니다.
